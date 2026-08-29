@@ -1,0 +1,370 @@
+openapi: 3.1.0
+info:
+  title: Mangaale Loyalty API
+  version: 0.3.0
+  description: >-
+    Implemented customer read surface and internal fixed-discount reward
+    reservation boundary. Business routes are unavailable unless their
+    server-side feature flags are enabled.
+servers:
+  - url: /
+paths:
+  /health:
+    get:
+      operationId: loyaltyHealth
+      responses:
+        "200":
+          description: Process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /ready:
+    get:
+      operationId: loyaltyReadiness
+      responses:
+        "200":
+          description: Enabled dependencies are ready.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+        "503":
+          description: An enabled dependency is unavailable.
+  /v1/loyalty/wallet:
+    get:
+      operationId: getLoyaltyWallet
+      security:
+        - customerBearer: []
+      responses:
+        "200":
+          description: Authenticated customer's wallet or a zero-value unenrolled view.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Wallet"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/loyalty/transactions:
+    get:
+      operationId: listLoyaltyTransactions
+      security:
+        - customerBearer: []
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: cursor
+          in: query
+          description: Opaque keyset cursor returned by the previous response.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Newest-first immutable ledger entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [transactions, next_cursor]
+                properties:
+                  transactions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Transaction"
+                  next_cursor:
+                    type: string
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /v1/loyalty/rewards:
+    get:
+      operationId: listLoyaltyRewards
+      security:
+        - customerBearer: []
+      parameters:
+        - name: restaurant_id
+          in: query
+          schema: {type: integer, format: int64, minimum: 1}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 100, default: 50}
+      responses:
+        "200":
+          description: Active global and optionally restaurant-scoped rewards.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rewards]
+                properties:
+                  rewards:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Reward"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+  /internal/v1/loyalty/reservations:
+    post:
+      operationId: reserveCatalogReward
+      description: Internal restaurant-service boundary; disabled unless both internal and redemption flags are true.
+      security:
+        - internalBearer: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReserveRewardRequest"
+      responses:
+        "200":
+          description: New or idempotently replayed reservation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Reservation"
+        "400": {$ref: "#/components/responses/InvalidRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "409": {description: Insufficient points, account restriction, usage limit, or idempotency conflict.}
+        "422": {description: Reward is unavailable or its effect is unsupported.}
+        "503": {$ref: "#/components/responses/Unavailable"}
+  /internal/v1/loyalty/reservations/{reservation_id}/release:
+    post:
+      operationId: releaseRewardReservation
+      security:
+        - internalBearer: []
+      parameters:
+        - $ref: "#/components/parameters/ReservationID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Reservation released idempotently.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Reservation"
+        "400": {$ref: "#/components/responses/InvalidRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {description: Reservation not found.}
+        "409": {description: Reservation state conflict.}
+        "503": {$ref: "#/components/responses/Unavailable"}
+  /internal/v1/loyalty/reservations/{reservation_id}/capture:
+    post:
+      operationId: captureRewardReservation
+      security:
+        - internalBearer: []
+      parameters:
+        - $ref: "#/components/parameters/ReservationID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_id]
+              properties:
+                order_id: {type: string, minLength: 1, maxLength: 200}
+              additionalProperties: false
+      responses:
+        "200":
+          description: Reservation captured idempotently.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Reservation"
+        "400": {$ref: "#/components/responses/InvalidRequest"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404": {description: Reservation not found.}
+        "409": {description: Reservation state conflict.}
+        "503": {$ref: "#/components/responses/Unavailable"}
+components:
+  securitySchemes:
+    customerBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Existing user-service HS256 customer token.
+    internalBearer:
+      type: http
+      scheme: bearer
+      description: Restaurant-to-loyalty service credential supplied by the secret manager.
+  parameters:
+    ReservationID:
+      name: reservation_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, minLength: 1, maxLength: 200}
+  responses:
+    InvalidRequest:
+      description: Invalid pagination input.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Missing or invalid customer token.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unavailable:
+      description: Loyalty data is temporarily unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Health:
+      type: object
+      required: [service, status]
+      properties:
+        service: {type: string, const: loyalty-service}
+        status: {type: string, const: ok}
+    Readiness:
+      type: object
+      required: [service, status, mode]
+      properties:
+        service: {type: string, const: loyalty-service}
+        status: {type: string, enum: [ready, not_ready]}
+        mode:
+          type: string
+          enum: [foundation, read_only, consumer, earning, redemption, read_consumer, read_earning, read_redemption]
+    Wallet:
+      type: object
+      required:
+        - status
+        - timezone
+        - available_points
+        - pending_points
+        - reserved_points
+        - debt_points
+        - lifetime_earned_points
+      properties:
+        status: {type: string}
+        timezone: {type: string}
+        available_points: {type: integer, format: int64}
+        pending_points: {type: integer, format: int64}
+        reserved_points: {type: integer, format: int64}
+        debt_points: {type: integer, format: int64}
+        lifetime_earned_points: {type: integer, format: int64}
+        updated_at: {type: string, format: date-time}
+    Transaction:
+      type: object
+      required:
+        - ledger_id
+        - type
+        - available_delta
+        - pending_delta
+        - reserved_delta
+        - debt_delta
+        - reference_type
+        - reference_id
+        - funding_source
+        - policy_version
+        - occurred_at
+        - created_at
+      properties:
+        ledger_id: {type: string, format: uuid}
+        type: {type: string}
+        available_delta: {type: integer, format: int64}
+        pending_delta: {type: integer, format: int64}
+        reserved_delta: {type: integer, format: int64}
+        debt_delta: {type: integer, format: int64}
+        reference_type: {type: string}
+        reference_id: {type: string}
+        order_id: {type: string}
+        restaurant_id: {type: integer, format: int64}
+        campaign_id: {type: string, format: uuid}
+        reward_id: {type: string, format: uuid}
+        funding_source: {type: string, enum: [MANGAALE, RESTAURANT, SHARED, NONE]}
+        policy_version: {type: string}
+        expires_at: {type: string, format: date-time}
+        occurred_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
+    Error:
+      type: object
+      required: [error, request_id]
+      properties:
+        error: {type: string}
+        request_id: {type: string}
+    Reward:
+      type: object
+      required:
+        - reward_id
+        - code
+        - name
+        - type
+        - scope
+        - points_cost
+        - funding_source
+        - policy_version
+      properties:
+        reward_id: {type: string, format: uuid}
+        code: {type: string}
+        name: {type: string}
+        description: {type: string}
+        type: {type: string}
+        scope: {type: string, enum: [GLOBAL_MANGAALE, RESTAURANT]}
+        restaurant_id: {type: integer, format: int64}
+        points_cost: {type: integer, format: int64, minimum: 1}
+        effect: {type: object, additionalProperties: true}
+        funding_source: {type: string, enum: [MANGAALE, RESTAURANT, SHARED]}
+        policy_version: {type: string}
+        starts_at: {type: string, format: date-time}
+        ends_at: {type: string, format: date-time}
+    Reservation:
+      type: object
+      required:
+        - reservation_id
+        - status
+        - points
+        - discount_minor
+        - currency
+        - funding_source
+        - policy_version
+        - expires_at
+        - replayed
+      properties:
+        reservation_id: {type: string, format: uuid}
+        status: {type: string, enum: [ACTIVE, CAPTURED, RELEASED, EXPIRED]}
+        points: {type: integer, format: int64, minimum: 1}
+        discount_minor: {type: integer, format: int64, minimum: 0}
+        currency: {type: string, pattern: "^[A-Z]{3}$"}
+        reward_id: {type: string, format: uuid}
+        restaurant_id: {type: integer, format: int64}
+        order_id: {type: string}
+        funding_source: {type: string, enum: [MANGAALE, RESTAURANT, SHARED]}
+        policy_version: {type: string}
+        expires_at: {type: string, format: date-time}
+        replayed: {type: boolean}
+    ReserveRewardRequest:
+      type: object
+      additionalProperties: false
+      required: [platform_user_id, reward_id, restaurant_id, checkout_reference]
+      properties:
+        platform_user_id: {type: string, format: uuid}
+        reward_id: {type: string, format: uuid}
+        restaurant_id: {type: integer, format: int64, minimum: 1}
+        checkout_reference: {type: string, minLength: 1, maxLength: 200}
+        order_id: {type: string, minLength: 1, maxLength: 200}

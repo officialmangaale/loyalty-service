@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+
+/loyalty-service
+/loyalty-service.exe
+/coverage.out
+/coverage.html
+
+*.log
+tmp/
