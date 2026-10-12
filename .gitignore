@@ -1,6 +1,4 @@
-.env
-.env.*
-!.env.example
+
 
 /loyalty-service
 /loyalty-service.exe

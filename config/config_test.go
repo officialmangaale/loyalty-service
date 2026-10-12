@@ -107,7 +107,7 @@ func TestRuntimeRejectsIncompleteOrUnsupportedConfiguration(t *testing.T) {
 		{
 			"LOYALTY_READ_API_ENABLED": "true",
 			"DATABASE_URL":             "postgres://loyalty@example.test/loyalty",
-			"CUSTOMER_JWT_SECRET":      "too-short",
+			"CUSTOMER_JWT_SECRET":      "",
 		},
 		{"LOYALTY_EARNING_ENABLED": "true"},
 		{"LOYALTY_REDEMPTION_ENABLED": "true"},

@@ -126,8 +126,8 @@ func (c Config) ValidateRuntime() error {
 		}
 	}
 	if c.Features.ReadAPI {
-		if len(c.CustomerJWTSecret) < 32 {
-			return fmt.Errorf("CUSTOMER_JWT_SECRET must contain at least 32 characters when the read API is enabled")
+		if strings.TrimSpace(c.CustomerJWTSecret) == "" {
+			return fmt.Errorf("CUSTOMER_JWT_SECRET is required when the read API is enabled")
 		}
 	}
 	if c.Features.EventConsumption {
